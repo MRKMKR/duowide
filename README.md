@@ -1,5 +1,10 @@
 # DuoWide
 
+**[Download MRKMKR Backgrounds Only beta — both required scripts in one ZIP](https://raw.githubusercontent.com/MRKMKR/duowide/backgrounds-only/downloads/DuoWide-Backgrounds-Only-2.0.12-beta.1.zip)**
+
+The Backgrounds Only implementation is on the [`backgrounds-only` branch](https://github.com/MRKMKR/duowide/tree/backgrounds-only). The ZIP above contains main script version `2.0.12-beta.1`, with Backgrounds Only selected, and the compatible Frames helper. See [installation instructions and limitations](https://github.com/MRKMKR/duowide/blob/backgrounds-only/docs/backgrounds-only.md). The upstream documentation and its original-version downloads follow below.
+
+
 **Web pages that use the whole iPhone Duo outer screen in Safari.**
 
 ⭐ If you like DuoWide, please give it a **Star** at the top of this page. It helps other iPhone Duo users find it.
