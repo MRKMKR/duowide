@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         DuoWide
 // @namespace    https://github.com/hyungchulc/duowide
-// @version      2.0.11
+// @version      2.0.12-beta.1
 // @description  Lets web pages use the whole iPhone Duo outer screen in Safari, under the side strip, and keeps what you tap clear of the strip.
 // @author       hyungchulc
-// @homepageURL  https://github.com/hyungchulc/duowide
-// @supportURL   https://github.com/hyungchulc/duowide/issues
-// @updateURL    https://raw.githubusercontent.com/hyungchulc/duowide/main/DuoWide.user.js
-// @downloadURL  https://raw.githubusercontent.com/hyungchulc/duowide/main/DuoWide.user.js
+// @homepageURL  https://github.com/MRKMKR/duowide
+// @supportURL   https://github.com/MRKMKR/duowide/issues
+// @updateURL    https://raw.githubusercontent.com/MRKMKR/duowide/backgrounds-only/DuoWide.user.js
+// @downloadURL  https://raw.githubusercontent.com/MRKMKR/duowide/backgrounds-only/DuoWide.user.js
 // @license      MIT
 // @match        *://*/*
 // @run-at       document-start
@@ -24,6 +24,8 @@
   // Settings. An update replaces this file, so set them again after one.
   // 설정. 업데이트하면 이 파일이 새로 바뀌니 다시 정해 주세요.
   const CONFIG = {
+    mode: "backgrounds", // "normal" keeps upstream behaviour; "backgrounds" reserves the safe content width.
+    siteModes: {},       // Domain overrides, e.g. { "example.com": "normal" }. Most specific domain wins.
     skip: [],          // Sites to leave as they are, e.g. "example.com" (its subdomains too). 넓히지 않을 사이트(하위 도메인도 같이).
     landscape: false,  // Widen in landscape too; not supported yet. 가로에서도 넓힐지(아직 지원 전).
     left: false,       // With landscape on, widen when the strip is on the left too. 가로를 켰을 때 버튼 줄이 왼쪽이어도 넓힐지.
@@ -35,6 +37,10 @@
   window.__duoWideLoaded = true;
   const site = location.hostname.replace(/^www\./, "");
   if (CONFIG.skip.some((d) => site === d || site.endsWith("." + d))) return;
+  const override = Object.keys(CONFIG.siteModes)
+    .filter((domain) => site === domain || site.endsWith("." + domain))
+    .sort((a, b) => b.length - a.length)[0];
+  const backgroundsOnly = (CONFIG.siteModes[override] || CONFIG.mode) === "backgrounds";
   // Safari keeps its controls in a side strip only on a phone's screen.
   if (!matchMedia("(pointer: coarse)").matches || !/iPhone/.test(navigator.userAgent)) return;
 
@@ -47,7 +53,7 @@
   const dbg = window.__duoWideDebug;  // tests: { strip: { side, gap, full } } stands in for the measured strip
   // DuoWide-WideText.user.js, while it is on in the Userscripts menu, asks for lines of words to run on under the strip
   // too (see fitLines). Userscripts runs it in this same content world, before or after this script.
-  const wideText = () => window.__duoWideText === "wide";
+  const wideText = () => !backgroundsOnly && window.__duoWideText === "wide";
 
   const store = {
     async get(key, fallback) {
@@ -234,6 +240,14 @@
   let scaled = false; // the reader has zoomed the page, so WebKit keeps its scale itself (see sleep)
   let byReader = false; // the zoom the page shows is the reader's own, a pinch or a double tap (see unzoom)
   let asleep = false; // the page's own viewport is back while it is hidden (see sleep)
+
+  // Reuse split view's background framing on the outer screen, with room only
+  // on the measured strip side. Detection, viewport geometry and scroll pinning
+  // continue to describe the real screen.
+  const framesContent = (s = strip) => !!s && (backgroundsOnly || s.side === "both");
+  const frameLeft = () => strip.side === "right" ? 0 : strip.gap;
+  const frameRight = () => strip.side === "left" ? 0 : strip.gap;
+  const frameSpace = () => frameLeft() + frameRight();
 
   // n points in the page's CSS pixels (see scales); TAP, EDGE and the scroll bar's TRACK are in points.
   const pt = (n) => n / (strip ? strip.zoom : 1);
@@ -506,7 +520,7 @@
     // has loaded: one still coming waits for the look, as its scripts size what they lay out as it comes (handed down
     // before Samsung's banner had come in, the room left it as wide as the page when Samsung's script measured it, and
     // it was sized for that, half again as tall, its picture across the strips).
-    if (s.side === "both" && document.body && document.readyState === "complete") {
+    if (framesContent(s) && document.body && document.readyState === "complete") {
       frozen = new Map();
       try { frame(); } finally { thaw(); }
       if (changes) changes.takeRecords();  // (its own restyling)
@@ -782,7 +796,7 @@
   // Moved while the page is laid out beside another window: its own sheets at once, one from elsewhere once it is
   // fetched again and stands in.
   function moveMedia(live) {
-    const d = strip && strip.side === "both" ? strip.full - Math.round(strip.full - 2 * strip.gap) : 0;
+    const d = framesContent() ? strip.full - Math.round(strip.full - frameSpace()) : 0;
     if (d !== shift) moveBy(d);
     for (const [sheet, el] of standIns) if (!live.has(sheet)) { el.remove(); standIns.delete(sheet); }  // (the page took its sheet out)
     if (shift) for (const sheet of live) {
@@ -817,12 +831,12 @@
   function wholeScreen() {
     const live = new Set(document.styleSheets);
     moveMedia(live);
-    const both = strip && strip.side === "both";
-    const unit = dbg && dbg.vw ? dbg.vw : strip && (both ? strip.full - 2 * strip.gap : strip.full) / 100;  // (tests: a vw as Safari counts it, to see the difference)
+    const framing = framesContent();
+    const unit = dbg && dbg.vw ? dbg.vw : strip && (framing ? strip.full - frameSpace() : strip.full) / 100;  // (tests: a vw as Safari counts it, to see the difference)
     const text = `:root{${VIEW}:100vw}` + (strip ? `:root{--duowide-vw:${unit}px !important}:where(html[${MARK}]){-webkit-text-size-adjust:100%}` +
       `:where(html[${BAR}]){scrollbar-color:transparent transparent}:where(html[${BAR}]>body){scrollbar-color:auto}` +
       `[${MARK}=edge]::backdrop{display:none!important}` : "") +
-      (both ? `html[${MARK}=both]:not([${FRAME}]){padding-left:${strip.gap}px!important;padding-right:${strip.gap}px!important;box-sizing:border-box!important}` : "") +
+      (framing ? `html[${MARK}]:not([${FRAME}]){padding-left:${frameLeft()}px!important;padding-right:${frameRight()}px!important;box-sizing:border-box!important}` : "") +
       laidOver.filter(([s]) => live.has(s) && !standIns.has(s)).map(([, over]) => over).join("");  // (one standing in is read itself)
     if (text !== screenText) {
       screenText = text;
@@ -920,7 +934,7 @@
   function scriptWidth(s) {
     const root = document.documentElement;
     // (Beside another window, the page lays out what it shows in the part shown, as Safari counts it: see frame.)
-    const r = s && s.side !== "both" ? (s.full * s.zoom) / scales().shown : 1;
+    const r = s && !framesContent(s) ? (s.full * s.zoom) / scales().shown : 1;
     const v = Number.isFinite(r) && r > 1.001 ? r.toFixed(5) : null;  // (none where all of it shows, as in Chromium)
     if (v === root.getAttribute(RATIO)) return;
     if (v) inPageOnce();
@@ -999,7 +1013,7 @@
     if (!strip) return;
     const root = document.documentElement;
     wide = widePage();
-    if (strip.side === "both") {
+    if (framesContent()) {
       // Beside another window, a page wider than it is widened to keeps one end past the window's edge, out of reach
       // (chatgpt.com lays its menu beside the page): once it has stayed that wide for a second, it is left at Safari's
       // own width, which it pans in.
@@ -2310,6 +2324,7 @@
   function fills(c, inside) {
     if (c.nodeType !== Node.ELEMENT_NODE || WHOLE.test(c.localName)) return false;
     const cs = getComputedStyle(c);
+    if (backgroundsOnly && (c.matches(CONTROL) || /auto|scroll/.test(cs.overflowX) || slides(c, kidsOf(c)))) return false;
     if (!/^(block|flex|grid|flow-root|list-item)$/.test(cs.display) || cs.float !== "none" || !spans(c, inside)) return false;
     if (["Left", "Right"].some((s) => !/^(none|hidden)$/.test(cs[`border${s}Style`]) && parseFloat(cs[`border${s}Width`]) > 0 && painted(cs[`border${s}Color`]))) return false;
     if (c.matches(CONTROL) && (painted(cs.backgroundColor) || cs.backgroundImage !== "none") && CORNERS.some((k) => parseFloat(cs[`border${k}Radius`]) > 1) && !acrossPage(c)) return false;
@@ -2371,7 +2386,7 @@
       if (!image.includes("url(") || !/^(no-repeat|repeat-y)/.test(reps[i % reps.length]) || /cover|contain|%/.test(sizes[i % sizes.length]) ||
           inside.test(origins[i % origins.length]) || !at) return x;
       moved = true;
-      return `calc(${+(at[0] * 100).toFixed(3)}% + ${+(at[1] + strip.gap * (1 - 2 * at[0])).toFixed(3)}px)`;
+      return `calc(${+(at[0] * 100).toFixed(3)}% + ${+(at[1] + frameLeft() - frameSpace() * at[0]).toFixed(3)}px)`;
     });
     if (!moved) return;
     setProp(e, "background-position-x", next.join(", "));
@@ -2411,7 +2426,7 @@
     const kids = kidsOf(c), inside = insideOf(c), w = inside.right - inside.left;
     if (kids.length !== 1 || kids[0].nodeType !== Node.ELEMENT_NODE) return false;
     return kidsOf(kids[0]).some((p) => p.nodeType === Node.ELEMENT_NODE && getComputedStyle(p).float !== "none" &&
-      [w, w - 2 * strip.gap].some((x) => Math.abs(p.getBoundingClientRect().width - x) < 1));
+      [w, w - frameSpace()].some((x) => Math.abs(p.getBoundingClientRect().width - x) < 1));
   }
 
   // Where the room goes from a box laid across all of the one it is in (or <html>), read off the page as it lies, with
@@ -2430,7 +2445,8 @@
     if (!kids.length && !sealed && !past.length && !over.length && !ratio) return;
     const inside = insideOf(e), afloat = holdsPage(e) ? kids.filter(floatsIn) : [];
     // (What in it isn't laid across it, when that alone keeps it from handing the room on: a box or a few, see freed.)
-    let short = sealed || out_ || ratio || ownMarks(e) ? null : [];
+    const foregroundLayer = backgroundsOnly && over.some((c) => WHOLE.test(c.localName) || c.matches(CONTROL));
+    let short = sealed || out_ || ratio || foregroundLayer || ownMarks(e) ? null : [];
     const amid = [];
     for (const c of short ? kids : []) {
       if (afloat.includes(c) || fills(c, inside)) continue;
@@ -2550,12 +2566,12 @@
   // cards runs on under the strips. And the height to keep a box whose height follows its width at (see ratioOf): as
   // tall as in Safari's own layout.
   function holding(e) {
-    const cs = getComputedStyle(e), roll = rolls(e), r = e.getBoundingClientRect(), ratio = ratioOf(e);
+    const cs = getComputedStyle(e), roll = !backgroundsOnly && rolls(e), r = e.getBoundingClientRect(), ratio = ratioOf(e);
     const bare = (s) => /^(none|hidden)$/.test(cs[`border${s}Style`]) || !(parseFloat(cs[`border${s}Width`]) > 0);
     const edge = !roll && bare("Left") && bare("Right") && cs.borderImageSource === "none" &&
       cs.backgroundClip.split(",").every((v) => v.trim() === "border-box");
     const pads = roll && /auto|scroll/.test(cs.overflowX) ? [cs.scrollPaddingLeft, cs.scrollPaddingRight] : null;  // (a row a finger scrolls: see rolls)
-    return [e, r, parseFloat(cs.paddingLeft) || 0, parseFloat(cs.paddingRight) || 0, cs.boxSizing, edge, roll, ratio && r.height - (2 * strip.gap) / ratio, pads];
+    return [e, r, parseFloat(cs.paddingLeft) || 0, parseFloat(cs.paddingRight) || 0, cs.boxSizing, edge, roll, ratio && r.height - (frameSpace()) / ratio, pads];
   }
   // A box that clips what it holds sideways and lays a row of it out past its sides, cards narrower than the middle it
   // would keep (a carousel showing the edge of the next card): kept in the middle inside a clear border, it cut the row
@@ -2583,7 +2599,7 @@
   function rolls(e) {
     const cs = getComputedStyle(e), ox = cs.overflowX, scrolls = /auto|scroll/.test(ox);
     if (scrolls ? holdsPage(e) : !/hidden|clip/.test(ox)) return false;
-    const inside = insideOf(e), strips = 2 * strip.gap, whole = inside.right - inside.left, w = whole - strips;
+    const inside = insideOf(e), strips = frameSpace(), whole = inside.right - inside.left, w = whole - strips;
     const beside = (a, b) => Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > Math.min(a.height, b.height) / 2;
     // (Cards narrower than `most`, one with its middle between `from` and `to` beside one without.)
     const row = (p, depth, most, from, to) => {
@@ -2613,7 +2629,7 @@
   // written, then all read, so the page is laid out a few times per look, not once per box. One sized to a width of its
   // own gives the room up from inside it too; one that still moves or grows hands it up to the box around it.
   function holdAll(out) {
-    const g = strip.gap;
+    const leftGap = frameLeft(), rightGap = frameRight();
     // (Planned from more than one box at once, as what comes into a page is (see frameIn), a box may lie in the flow of
     // another that takes the room now, or keeps it already: it is taken once, by the outer one. Amazon's home brought a
     // card into its deck as the deck came to keep the room, the card's header took it again inside, and the card's
@@ -2628,9 +2644,12 @@
       for (const k of [...handed]) if (k !== e && e.contains(k)) unhand(k);
     }
     for (const [e, , pl, pr, , edge, , , pads] of out.hold) {
-      if (edge) for (const side of ["left", "right"]) { setProp(e, `border-${side}-style`, "solid"); setProp(e, `border-${side}-color`, "transparent"); setProp(e, `border-${side}-width`, `${g}px`); }
-      else { setProp(e, "padding-left", `${pl + g}px`); setProp(e, "padding-right", `${pr + g}px`); }
-      if (pads) pads.forEach((v, i) => setProp(e, `scroll-padding-${i ? "right" : "left"}`, v === "auto" ? `${g}px` : `calc(${v} + ${g}px)`));
+      if (edge) for (const side of ["left", "right"]) { setProp(e, `border-${side}-style`, "solid"); setProp(e, `border-${side}-color`, "transparent"); setProp(e, `border-${side}-width`, `${side === "left" ? leftGap : rightGap}px`); }
+      else { setProp(e, "padding-left", `${pl + leftGap}px`); setProp(e, "padding-right", `${pr + rightGap}px`); }
+      if (pads) pads.forEach((v, i) => {
+        const gap = i ? rightGap : leftGap;
+        setProp(e, `scroll-padding-${i ? "right" : "left"}`, v === "auto" ? `${gap}px` : `calc(${v} + ${gap}px)`);
+      });
     }
     const grew = new Set(out.hold.filter(([e, b, , , sizing]) => sizing !== "border-box" && Math.abs(e.getBoundingClientRect().width - b.width) > 0.5).map(([e]) => e));
     for (const e of grew) setProp(e, "box-sizing", "border-box");
@@ -2730,6 +2749,10 @@
     if (!edged.has(e) || cs.overflowX !== "visible") return;
     const left = r.left + (parseFloat(cs.borderLeftWidth) || 0), right = r.right - (parseFloat(cs.borderRightWidth) || 0);
     if (Math.abs(left - lo) > 1 || Math.abs(right - hi) > 1) return;
+    // Match the original viewport edge for intentionally overflowing artwork.
+    // A clip at the padding edge leaves the container's background painted
+    // through its transparent border and does not create a scroll container.
+    if (backgroundsOnly) { setProp(e, "overflow-x", "clip"); return; }
     const past = (c) => { const q = laidAt(c); return q.left < left - 0.5 || q.right > right + 0.5; };
     if (kidsOf(e).some((c) => c.nodeType === Node.ELEMENT_NODE && past(c)) || !panelsIn(e)) return;
     for (let p = up(e); p; p = up(p)) if (/hidden|clip/.test(getComputedStyle(p).overflowX)) { setProp(e, "overflow-x", "clip"); return; }
@@ -2871,6 +2894,7 @@
   const rowsAt = new WeakMap(), rowsLater = new Set();  // a box whose rows' colors were last read -> when; those to read once more
   let rowsTimer = 0;
   function carryEdges(k, keep = false) {
+    if (backgroundsOnly) return;
     const img = edged.has(k) ? edgePicture(k) : null;
     let src = "", how = "", sides = [];
     if (!img && edged.has(k)) {
@@ -2986,12 +3010,12 @@
       }
       return false;
     };
-    return r.width - (inside.right - inside.left) >= 2 * strip.gap - 1 && wide(k, 1);
+    return r.width - (inside.right - inside.left) >= frameSpace() - 1 && wide(k, 1);
   }
 
   // A look: the room comes off <html> (see wholeScreen) and is handed down afresh.
   function frame() {
-    if (!strip || strip.side !== "both" || !document.body || unframed) return;
+    if (!framesContent() || !document.body || unframed) return;
     const root = document.documentElement;
     if (!root.hasAttribute(FRAME)) root.setAttribute(FRAME, "");
     for (const k of [...keepers]) if (!k.isConnected) letGo(k);
@@ -3038,7 +3062,7 @@
     return `${sizeOf(e)} ${cs.display} ${cs.position} ${kids.join(" ")}`;
   };
   function frameIn(nodes, changed = []) {
-    if (!strip || strip.side !== "both" || unframed || !document.documentElement.hasAttribute(FRAME)) return;
+    if (!framesContent() || unframed || !document.documentElement.hasAttribute(FRAME)) return;
     const out = { hand: [], hold: [], bring: [] }, seen = new Set();
     nodes = [...nodes];
     for (const n of changed) {
@@ -4813,7 +4837,7 @@
   const changed = new Set();  // and what changed, beside another window
   function fitLinesSoon(nodes, also = []) {
     for (const n of nodes) if (n.nodeType === Node.TEXT_NODE || (n.nodeType === Node.ELEMENT_NODE && !n.hasAttribute(MARK))) fresh.add(n);
-    if (strip && strip.side === "both") for (const n of also) if (n.nodeType === Node.ELEMENT_NODE && !n.hasAttribute(MARK)) changed.add(n);
+    if (framesContent()) for (const n of also) if (n.nodeType === Node.ELEMENT_NODE && !n.hasAttribute(MARK)) changed.add(n);
     if (linesFrame || (!fresh.size && !changed.size)) return;
     linesFrame = requestAnimationFrame(() => {
       linesFrame = 0;
@@ -4822,7 +4846,7 @@
       changed.clear();
       if (dbg && dbg.lines) dbg.lines.push([Math.round(performance.now()), came.length, !!strip, !!document.body, strip ? passing() : null]);  // tests: when it ran
       if (!strip || !document.body || passing()) return;
-      if (strip.side === "both") {
+      if (framesContent()) {
         frozen = new Map();
         try { frameIn(came, moved); edgesIn([...came, ...moved]); } finally { thaw(); }
         if (changes) changes.takeRecords();  // its own restyling
@@ -4955,7 +4979,7 @@
       if (added.some((n) => n.nodeType === Node.ELEMENT_NODE)) { lookAtNew(added); refixAllSoon(); }
       if (added.length) fitLinesSoon(added);
       // (A box shown or restyled, see frameIn; and one keeping the room for what is taken out of it, see freed.)
-      if (strip.side === "both") {
+      if (framesContent()) {
         const keeperOf = (e) => { while (e && !keepers.has(e)) e = e.parentElement; return e; };
         const left = records.filter((rec) => rec.type === "childList" && rec.removedNodes.length).map((rec) => keeperOf(rec.target)).filter((k) => k && blockers.has(k));
         fitLinesSoon([], records.filter((rec) => rec.type === "attributes").map((rec) => rec.target).concat(left));
